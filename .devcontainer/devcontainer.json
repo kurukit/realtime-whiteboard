@@ -1,0 +1,26 @@
+{
+    "name": "Node.js Whiteboard",
+    "image": "mcr.microsoft.com/devcontainers/universal:latest", // หรือ image ที่คุณใช้อยู่
+    "features": {
+        "ghcr.io/devcontainers/features/node:1": {
+            "version": "latest"
+        }
+    },
+    "postCreateCommand": "npm install && node server.js", // คำสั่งนี้จะรันเมื่อ Codespace ถูกสร้างหรือ Rebuild ใหม่
+    "portsAttributes": {
+        "3000": {
+            "label": "Whiteboard App",
+            "onAutoForward": "notify" // หรือ "openBrowser" ถ้าต้องการให้เปิดเบราว์เซอร์อัตโนมัติ
+        }
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "esbenp.prettier-vscode",
+                "dbaeumer.vscode-eslint"
+                // เพิ่ม extensions อื่นๆ ที่คุณต้องการใช้ใน VS Code
+            ]
+        }
+    },
+    "forwardPorts": [3000] // สั่งให้ forward port 3000 อัตโนมัติ
+}
