@@ -2,8 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Whiteboard ด.ช. กันต์</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"> <title>Whiteboard ด.ช. กันต์</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #f0f0f0; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
         #whiteboard-container {
@@ -15,12 +14,13 @@
             justify-content: center;
             align-items: center;
             overflow: hidden; /* เพื่อให้รูปภาพไม่ล้นกรอบ */
+            touch-action: none; /* ป้องกันการเลื่อนหน้าจอหลักเมื่อสัมผัสบน canvas */
         }
         canvas { display: block; }
         #board-title { /* Style สำหรับชื่อกระดานบนบอร์ด */
             position: absolute;
-            top: 20px;
-            font-size: 2em;
+            top: 10px; /* ลดระยะจากขอบบน */
+            font-size: 1.5em; /* ลดขนาดตัวอักษร */
             font-weight: bold;
             color: #333;
             z-index: 5;
@@ -38,6 +38,7 @@
             display: flex;
             gap: 10px; /* เพิ่มระยะห่างระหว่างองค์ประกอบ */
             align-items: center;
+            flex-wrap: wrap; /* ให้ปุ่มขึ้นบรรทัดใหม่ถ้ายาวไป */
         }
         input[type="color"] { width: 40px; height: 30px; border: none; padding: 0; }
         input[type="range"] { vertical-align: middle; }
@@ -48,6 +49,7 @@
             border-radius: 4px;
             background-color: #f0f0f0;
             transition: background-color 0.2s;
+            white-space: nowrap; /* ป้องกันข้อความในปุ่มขึ้นบรรทัดใหม่ */
         }
         button:hover { background-color: #e0e0e0; }
         button.active { /* Style สำหรับปุ่มที่ถูกเลือกอยู่ */
@@ -64,6 +66,7 @@
             border-radius: 4px;
             background-color: #f0f0f0;
             transition: background-color 0.2s;
+            white-space: nowrap;
         }
         .custom-file-upload:hover { background-color: #e0e0e0; }
         .draggable-image {
@@ -72,23 +75,29 @@
             max-width: 100%;
             max-height: 100%;
             object-fit: contain; /* เพื่อให้รูปภาพไม่บิดเบี้ยว */
+            touch-action: none; /* ป้องกันการเลื่อนหน้าจอเมื่อลากรูปภาพบน mobile */
         }
     </style>
 </head>
 <body>
     <div id="whiteboard-container">
-        <h1 id="board-title">Whiteboard ด.ช. กันต์</h1> <canvas id="whiteboard"></canvas>
-        <div id="image-layer"></div> </div>
+        <h1 id="board-title">Whiteboard ด.ช. กันต์</h1>
+        <canvas id="whiteboard"></canvas>
+        <div id="image-layer"></div>
+    </div>
 
     <div id="toolbar">
         <input type="color" id="colorPicker" value="#000000">
         <input type="range" id="brushSize" min="1" max="20" value="5">
-        <button id="penBtn" class="active">ดินสอ</button> <button id="eraserBtn">ยางลบ</button> <button id="clearBtn">ล้างกระดาน</button>
+        <button id="penBtn" class="active">ดินสอ</button>
+        <button id="eraserBtn">ยางลบ</button>
+        <button id="clearBtn">ล้างกระดาน</button>
         
         <label for="imageUpload" class="custom-file-upload">
             เพิ่มรูปภาพ
         </label>
-        <input type="file" id="imageUpload" accept="image/*"> </div>
+        <input type="file" id="imageUpload" accept="image/*">
+    </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
@@ -97,10 +106,10 @@
         const imageLayer = document.getElementById('image-layer');
         const colorPicker = document.getElementById('colorPicker');
         const brushSize = document.getElementById('brushSize');
-        const penBtn = document.getElementById('penBtn'); // ปุ่มดินสอใหม่
-        const eraserBtn = document.getElementById('eraserBtn'); // ปุ่มยางลบ
+        const penBtn = document.getElementById('penBtn');
+        const eraserBtn = document.getElementById('eraserBtn');
         const clearBtn = document.getElementById('clearBtn');
-        const imageUpload = document.getElementById('imageUpload'); // ปุ่มเพิ่มรูปภาพ
+        const imageUpload = document.getElementById('imageUpload');
         const socket = io();
 
         let isDrawing = false;
@@ -108,10 +117,13 @@
         let lastY = 0;
         let currentColor = colorPicker.value;
         let currentBrushSize = brushSize.value;
-        let isErasing = false; // สถานะยางลบ
+        let isErasing = false;
 
-        // Set initial canvas size relative to container for border
+        let drawingHistory = [];
+        let imageHistory = [];
+
         const whiteboardContainer = document.getElementById('whiteboard-container');
+
         function resizeCanvas() {
             const maxWidth = window.innerWidth * 0.9;
             const maxHeight = window.innerHeight * 0.9;
@@ -131,7 +143,7 @@
             canvas.width = newWidth;
             canvas.height = newHeight;
 
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            redrawAllContent();
         }
 
         window.addEventListener('resize', resizeCanvas);
@@ -150,72 +162,120 @@
             ctx.moveTo(x1, y1);
             ctx.lineTo(x2, y2);
             ctx.stroke();
-            ctx.globalCompositeOperation = 'source-over'; // รีเซ็ตกลับทันทีหลังวาด
+            ctx.globalCompositeOperation = 'source-over';
         }
 
-        canvas.addEventListener('mousedown', (e) => {
+        function redrawAllContent() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            imageLayer.innerHTML = '';
+
+            drawingHistory.forEach(stroke => {
+                drawLine(stroke.x1, stroke.y1, stroke.x2, stroke.y2, stroke.color, stroke.size, stroke.erase);
+            });
+
+            imageHistory.forEach(imgData => {
+                addImageToWhiteboard(imgData.image, imgData.id, imgData.x, imgData.y, false);
+            });
+        }
+
+        // Helper to get coordinates for both mouse and touch events
+        function getCoords(e) {
+            const rect = canvas.getBoundingClientRect();
+            if (e.touches && e.touches[0]) {
+                return {
+                    x: e.touches[0].clientX - rect.left,
+                    y: e.touches[0].clientY - rect.top
+                };
+            }
+            return {
+                x: e.clientX - rect.left,
+                y: e.clientY - rect.top
+            };
+        }
+
+        // --- Mouse and Touch Event Listeners ---
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseout', stopDrawing); // Mouse specific
+
+        canvas.addEventListener('touchstart', startDrawing);
+        canvas.addEventListener('touchmove', draw);
+        canvas.addEventListener('touchend', stopDrawing);
+        canvas.addEventListener('touchcancel', stopDrawing); // Touch specific
+
+        function startDrawing(e) {
+            e.preventDefault(); // Prevent scrolling on touch devices
             isDrawing = true;
-            [lastX, lastY] = [e.offsetX, e.offsetY];
-            drawLine(lastX, lastY, e.offsetX, e.offsetY, currentColor, currentBrushSize, isErasing);
-            socket.emit('drawing', {
+            const coords = getCoords(e);
+            lastX = coords.x;
+            lastY = coords.y;
+
+            // Draw a dot immediately on start
+            const stroke = {
                 x1: lastX, y1: lastY,
-                x2: e.offsetX, y2: e.offsetY,
+                x2: lastX, y2: lastY,
                 color: currentColor,
                 size: currentBrushSize,
                 erase: isErasing
-            });
-        });
+            };
+            drawLine(stroke.x1, stroke.y1, stroke.x2, stroke.y2, stroke.color, stroke.size, stroke.erase);
+            drawingHistory.push(stroke);
+            socket.emit('drawing', stroke);
+        }
 
-        canvas.addEventListener('mousemove', (e) => {
+        function draw(e) {
             if (!isDrawing) return;
-            drawLine(lastX, lastY, e.offsetX, e.offsetY, currentColor, currentBrushSize, isErasing);
-            socket.emit('drawing', {
+            e.preventDefault(); // Prevent scrolling on touch devices
+            const coords = getCoords(e);
+            const stroke = {
                 x1: lastX, y1: lastY,
-                x2: e.offsetX, y2: e.offsetY,
+                x2: coords.x, y2: coords.y,
                 color: currentColor,
                 size: currentBrushSize,
                 erase: isErasing
-            });
-            [lastX, lastY] = [e.offsetX, e.offsetY];
-        });
+            };
+            drawLine(stroke.x1, stroke.y1, stroke.x2, stroke.y2, stroke.color, stroke.size, stroke.erase);
+            drawingHistory.push(stroke);
+            socket.emit('drawing', stroke);
+            lastX = coords.x;
+            lastY = coords.y;
+        }
 
-        canvas.addEventListener('mouseup', () => isDrawing = false);
-        canvas.addEventListener('mouseout', () => isDrawing = false);
+        function stopDrawing() {
+            isDrawing = false;
+        }
+
 
         colorPicker.addEventListener('change', (e) => {
             currentColor = e.target.value;
-            // เมื่อเปลี่ยนสี ให้กลับเป็นโหมดดินสออัตโนมัติ
             isErasing = false;
             ctx.globalCompositeOperation = 'source-over';
-            updateToolbarButtons(); // อัปเดตสถานะปุ่ม
+            updateToolbarButtons();
         });
 
         brushSize.addEventListener('change', (e) => {
             currentBrushSize = e.target.value;
         });
 
-        // Event listener สำหรับปุ่มดินสอ
         penBtn.addEventListener('click', () => {
             isErasing = false;
-            currentColor = colorPicker.value; // กลับไปใช้สีที่เลือกไว้
-            ctx.globalCompositeOperation = 'source-over'; // รีเซ็ต blend mode
-            updateToolbarButtons(); // อัปเดตสถานะปุ่ม
+            currentColor = colorPicker.value;
+            ctx.globalCompositeOperation = 'source-over';
+            updateToolbarButtons();
         });
 
-        // Event listener สำหรับปุ่มยางลบ
         eraserBtn.addEventListener('click', () => {
             isErasing = true;
-            currentColor = '#FFFFFF'; // ยางลบใช้สีขาว (สมมติพื้นหลังขาว)
-            ctx.globalCompositeOperation = 'destination-out'; // โหมดการลบ
-            updateToolbarButtons(); // อัปเดตสถานะปุ่ม
+            currentColor = '#FFFFFF';
+            ctx.globalCompositeOperation = 'destination-out';
+            updateToolbarButtons();
         });
 
         function updateToolbarButtons() {
-            // ลบคลาส 'active' ออกจากทุกปุ่ม
             penBtn.classList.remove('active');
             eraserBtn.classList.remove('active');
 
-            // เพิ่มคลาส 'active' ให้กับปุ่มที่ถูกเลือก
             if (isErasing) {
                 eraserBtn.classList.add('active');
             } else {
@@ -226,6 +286,8 @@
         clearBtn.addEventListener('click', () => {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             imageLayer.innerHTML = '';
+            drawingHistory = [];
+            imageHistory = [];
             socket.emit('drawing', { clear: true });
         });
 
@@ -236,14 +298,16 @@
                 reader.onload = (event) => {
                     const imageData = event.target.result;
                     const id = `img-${Date.now()}`;
-                    socket.emit('drawing', { image: imageData, id: id, x: 0, y: 0 });
-                    addImageToWhiteboard(imageData, id, 0, 0);
+                    const imgObj = { image: imageData, id: id, x: 0, y: 0 };
+                    imageHistory.push(imgObj);
+                    socket.emit('drawing', imgObj);
+                    addImageToWhiteboard(imageData, id, 0, 0, false);
                 };
                 reader.readAsDataURL(file);
             }
         });
 
-        function addImageToWhiteboard(imageData, id, x, y) {
+        function addImageToWhiteboard(imageData, id, x, y, emit = true) {
             const img = document.createElement('img');
             img.src = imageData;
             img.className = 'draggable-image';
@@ -257,53 +321,75 @@
             let currentY;
             let initialX;
             let initialY;
-            let xOffset = x; // Start with initial x, y
+            let xOffset = x;
             let yOffset = y;
 
-            img.addEventListener('mousedown', (e) => {
-                initialX = e.clientX - xOffset;
-                initialY = e.clientY - yOffset;
+            // Touch and Mouse events for dragging images
+            img.addEventListener('mousedown', dragStart);
+            img.addEventListener('touchstart', dragStart);
+
+            function dragStart(e) {
+                e.preventDefault(); // Prevent default browser touch actions
+                const coords = getCoords(e);
+                initialX = coords.x - xOffset;
+                initialY = coords.y - yOffset;
                 if (e.target === img) {
                     isDragging = true;
                 }
-            });
+            }
 
-            document.addEventListener('mouseup', () => {
+            document.addEventListener('mouseup', dragEnd);
+            document.addEventListener('touchend', dragEnd);
+            document.addEventListener('touchcancel', dragEnd);
+
+            function dragEnd() {
+                if (!isDragging) return;
                 isDragging = false;
-                // Update xOffset/yOffset to current position for next drag
                 xOffset = parseInt(img.style.left, 10);
                 yOffset = parseInt(img.style.top, 10);
 
-                // Emit new position to others if dragging stopped
-                socket.emit('drawing', {
-                    moveImage: true,
-                    id: img.id,
-                    x: xOffset,
-                    y: yOffset
-                });
-            });
-
-            document.addEventListener('mousemove', (e) => {
-                if (isDragging) {
-                    e.preventDefault();
-                    currentX = e.clientX - initialX;
-                    currentY = e.clientY - initialY;
-
-                    img.style.left = `${currentX}px`;
-                    img.style.top = `${currentY}px`;
+                if (emit) {
+                    socket.emit('drawing', {
+                        moveImage: true,
+                        id: img.id,
+                        x: xOffset,
+                        y: yOffset
+                    });
                 }
-            });
+                const imgIndex = imageHistory.findIndex(item => item.id === id);
+                if (imgIndex > -1) {
+                    imageHistory[imgIndex].x = xOffset;
+                    imageHistory[imgIndex].y = yOffset;
+                }
+            }
+
+            document.addEventListener('mousemove', drag);
+            document.addEventListener('touchmove', drag);
+
+            function drag(e) {
+                if (!isDragging) return;
+                e.preventDefault(); // Prevent scrolling on touch devices
+                const coords = getCoords(e);
+                currentX = coords.x - initialX;
+                currentY = coords.y - initialY;
+
+                img.style.left = `${currentX}px`;
+                img.style.top = `${currentY}px`;
+            }
         }
 
         socket.on('drawing', (data) => {
             if (data.clear) {
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 imageLayer.innerHTML = '';
+                drawingHistory = [];
+                imageHistory = [];
                 return;
             }
             if (data.image) {
                 if (!document.getElementById(data.id)) {
-                    addImageToWhiteboard(data.image, data.id, data.x, data.y);
+                    addImageToWhiteboard(data.image, data.id, data.x, data.y, false);
+                    imageHistory.push({ image: data.image, id: data.id, x: data.x, y: data.y });
                 }
                 return;
             }
@@ -312,13 +398,30 @@
                 if (imgToMove) {
                     imgToMove.style.left = `${data.x}px`;
                     imgToMove.style.top = `${data.y}px`;
+                    const imgIndex = imageHistory.findIndex(item => item.id === data.id);
+                    if (imgIndex > -1) {
+                        imageHistory[imgIndex].x = data.x;
+                        imageHistory[imgIndex].y = data.y;
+                    }
                 }
                 return;
             }
             drawLine(data.x1, data.y1, data.x2, data.y2, data.color, data.size, data.erase);
+            drawingHistory.push(data);
         });
 
-        // เรียกใช้งาน updateToolbarButtons เมื่อโหลดหน้าครั้งแรก เพื่อให้ปุ่มดินสอเป็น Active
+        socket.on('connect', () => {
+            console.log('Connected to server, requesting history...');
+            socket.emit('requestHistory');
+        });
+
+        socket.on('history', (history) => {
+            console.log('Received history:', history);
+            drawingHistory = history.drawings || [];
+            imageHistory = history.images || [];
+            redrawAllContent();
+        });
+
         updateToolbarButtons();
     </script>
 </body>
