@@ -3,10 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Realtime Whiteboard</title>
+    <title>Whiteboard ด.ช. กันต์</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #f0f0f0; }
-        canvas { display: block; background-color: white; border: 1px solid #ccc; }
+        body { margin: 0; overflow: hidden; background-color: #f0f0f0; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        #whiteboard-container {
+            position: relative;
+            background-color: white;
+            border: 2px solid #333; /* กรอบกระดาน */
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden; /* เพื่อให้รูปภาพไม่ล้นกรอบ */
+        }
+        canvas { display: block; }
+        #board-title { /* Style สำหรับชื่อกระดานบนบอร์ด */
+            position: absolute;
+            top: 20px;
+            font-size: 2em;
+            font-weight: bold;
+            color: #333;
+            z-index: 5;
+            text-shadow: 1px 1px 2px rgba(255,255,255,0.7);
+        }
         #toolbar {
             position: absolute;
             top: 10px;
@@ -15,106 +34,292 @@
             padding: 10px;
             border-radius: 5px;
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            z-index: 10; /* ให้ toolbar อยู่ด้านบนสุด */
+            display: flex;
+            gap: 10px; /* เพิ่มระยะห่างระหว่างองค์ประกอบ */
+            align-items: center;
         }
         input[type="color"] { width: 40px; height: 30px; border: none; padding: 0; }
         input[type="range"] { vertical-align: middle; }
-        button { padding: 8px 12px; margin-left: 5px; cursor: pointer; }
+        button {
+            padding: 8px 12px;
+            cursor: pointer;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background-color: #f0f0f0;
+            transition: background-color 0.2s;
+        }
+        button:hover { background-color: #e0e0e0; }
+        button.active { /* Style สำหรับปุ่มที่ถูกเลือกอยู่ */
+            background-color: #b0e0e6; /* สีฟ้าอ่อน */
+            border-color: #6a5acd;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
+        }
+        input[type="file"] { display: none; } /* ซ่อน input type file เดิม */
+        .custom-file-upload {
+            border: 1px solid #ccc;
+            display: inline-block;
+            padding: 8px 12px;
+            cursor: pointer;
+            border-radius: 4px;
+            background-color: #f0f0f0;
+            transition: background-color 0.2s;
+        }
+        .custom-file-upload:hover { background-color: #e0e0e0; }
+        .draggable-image {
+            position: absolute;
+            cursor: grab;
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain; /* เพื่อให้รูปภาพไม่บิดเบี้ยว */
+        }
     </style>
 </head>
 <body>
+    <div id="whiteboard-container">
+        <h1 id="board-title">Whiteboard ด.ช. กันต์</h1> <canvas id="whiteboard"></canvas>
+        <div id="image-layer"></div> </div>
+
     <div id="toolbar">
         <input type="color" id="colorPicker" value="#000000">
         <input type="range" id="brushSize" min="1" max="20" value="5">
-        <button id="clearBtn">Clear</button>
-    </div>
-    <canvas id="whiteboard"></canvas>
+        <button id="penBtn" class="active">ดินสอ</button> <button id="eraserBtn">ยางลบ</button> <button id="clearBtn">ล้างกระดาน</button>
+        
+        <label for="imageUpload" class="custom-file-upload">
+            เพิ่มรูปภาพ
+        </label>
+        <input type="file" id="imageUpload" accept="image/*"> </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const canvas = document.getElementById('whiteboard');
         const ctx = canvas.getContext('2d');
+        const imageLayer = document.getElementById('image-layer');
         const colorPicker = document.getElementById('colorPicker');
         const brushSize = document.getElementById('brushSize');
+        const penBtn = document.getElementById('penBtn'); // ปุ่มดินสอใหม่
+        const eraserBtn = document.getElementById('eraserBtn'); // ปุ่มยางลบ
         const clearBtn = document.getElementById('clearBtn');
+        const imageUpload = document.getElementById('imageUpload'); // ปุ่มเพิ่มรูปภาพ
         const socket = io();
 
         let isDrawing = false;
         let lastX = 0;
         let lastY = 0;
+        let currentColor = colorPicker.value;
+        let currentBrushSize = brushSize.value;
+        let isErasing = false; // สถานะยางลบ
 
-        canvas.width = window.innerWidth - 20; // Give some margin
-        canvas.height = window.innerHeight - 20;
+        // Set initial canvas size relative to container for border
+        const whiteboardContainer = document.getElementById('whiteboard-container');
+        function resizeCanvas() {
+            const maxWidth = window.innerWidth * 0.9;
+            const maxHeight = window.innerHeight * 0.9;
+            const aspectRatio = 16 / 9;
+
+            let newWidth = maxWidth;
+            let newHeight = newWidth / aspectRatio;
+
+            if (newHeight > maxHeight) {
+                newHeight = maxHeight;
+                newWidth = newHeight * aspectRatio;
+            }
+
+            whiteboardContainer.style.width = `${newWidth}px`;
+            whiteboardContainer.style.height = `${newHeight}px`;
+
+            canvas.width = newWidth;
+            canvas.height = newHeight;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
 
         ctx.lineJoin = 'round';
         ctx.lineCap = 'round';
-        ctx.strokeStyle = colorPicker.value;
-        ctx.lineWidth = brushSize.value;
+        ctx.strokeStyle = currentColor;
+        ctx.lineWidth = currentBrushSize;
 
-        function draw(e) {
-            if (!isDrawing) return;
+        function drawLine(x1, y1, x2, y2, color, size, erase = false) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = size;
+            ctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
             ctx.beginPath();
-            ctx.moveTo(lastX, lastY);
-            ctx.lineTo(e.offsetX, e.offsetY);
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
             ctx.stroke();
-
-            [lastX, lastY] = [e.offsetX, e.offsetY];
-
-            // Emit drawing data to server
-            socket.emit('drawing', {
-                x1: lastX, y1: lastY,
-                x2: e.offsetX, y2: e.offsetY,
-                color: ctx.strokeStyle,
-                size: ctx.lineWidth
-            });
+            ctx.globalCompositeOperation = 'source-over'; // รีเซ็ตกลับทันทีหลังวาด
         }
 
         canvas.addEventListener('mousedown', (e) => {
             isDrawing = true;
             [lastX, lastY] = [e.offsetX, e.offsetY];
+            drawLine(lastX, lastY, e.offsetX, e.offsetY, currentColor, currentBrushSize, isErasing);
+            socket.emit('drawing', {
+                x1: lastX, y1: lastY,
+                x2: e.offsetX, y2: e.offsetY,
+                color: currentColor,
+                size: currentBrushSize,
+                erase: isErasing
+            });
         });
 
-        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isDrawing) return;
+            drawLine(lastX, lastY, e.offsetX, e.offsetY, currentColor, currentBrushSize, isErasing);
+            socket.emit('drawing', {
+                x1: lastX, y1: lastY,
+                x2: e.offsetX, y2: e.offsetY,
+                color: currentColor,
+                size: currentBrushSize,
+                erase: isErasing
+            });
+            [lastX, lastY] = [e.offsetX, e.offsetY];
+        });
+
         canvas.addEventListener('mouseup', () => isDrawing = false);
         canvas.addEventListener('mouseout', () => isDrawing = false);
 
         colorPicker.addEventListener('change', (e) => {
-            ctx.strokeStyle = e.target.value;
+            currentColor = e.target.value;
+            // เมื่อเปลี่ยนสี ให้กลับเป็นโหมดดินสออัตโนมัติ
+            isErasing = false;
+            ctx.globalCompositeOperation = 'source-over';
+            updateToolbarButtons(); // อัปเดตสถานะปุ่ม
         });
 
         brushSize.addEventListener('change', (e) => {
-            ctx.lineWidth = e.target.value;
+            currentBrushSize = e.target.value;
         });
+
+        // Event listener สำหรับปุ่มดินสอ
+        penBtn.addEventListener('click', () => {
+            isErasing = false;
+            currentColor = colorPicker.value; // กลับไปใช้สีที่เลือกไว้
+            ctx.globalCompositeOperation = 'source-over'; // รีเซ็ต blend mode
+            updateToolbarButtons(); // อัปเดตสถานะปุ่ม
+        });
+
+        // Event listener สำหรับปุ่มยางลบ
+        eraserBtn.addEventListener('click', () => {
+            isErasing = true;
+            currentColor = '#FFFFFF'; // ยางลบใช้สีขาว (สมมติพื้นหลังขาว)
+            ctx.globalCompositeOperation = 'destination-out'; // โหมดการลบ
+            updateToolbarButtons(); // อัปเดตสถานะปุ่ม
+        });
+
+        function updateToolbarButtons() {
+            // ลบคลาส 'active' ออกจากทุกปุ่ม
+            penBtn.classList.remove('active');
+            eraserBtn.classList.remove('active');
+
+            // เพิ่มคลาส 'active' ให้กับปุ่มที่ถูกเลือก
+            if (isErasing) {
+                eraserBtn.classList.add('active');
+            } else {
+                penBtn.classList.add('active');
+            }
+        }
 
         clearBtn.addEventListener('click', () => {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            socket.emit('drawing', { clear: true }); // Notify others to clear
+            imageLayer.innerHTML = '';
+            socket.emit('drawing', { clear: true });
         });
 
-        // Listen for drawing events from other users
+        imageUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const imageData = event.target.result;
+                    const id = `img-${Date.now()}`;
+                    socket.emit('drawing', { image: imageData, id: id, x: 0, y: 0 });
+                    addImageToWhiteboard(imageData, id, 0, 0);
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        function addImageToWhiteboard(imageData, id, x, y) {
+            const img = document.createElement('img');
+            img.src = imageData;
+            img.className = 'draggable-image';
+            img.style.left = `${x}px`;
+            img.style.top = `${y}px`;
+            img.id = id;
+            imageLayer.appendChild(img);
+
+            let isDragging = false;
+            let currentX;
+            let currentY;
+            let initialX;
+            let initialY;
+            let xOffset = x; // Start with initial x, y
+            let yOffset = y;
+
+            img.addEventListener('mousedown', (e) => {
+                initialX = e.clientX - xOffset;
+                initialY = e.clientY - yOffset;
+                if (e.target === img) {
+                    isDragging = true;
+                }
+            });
+
+            document.addEventListener('mouseup', () => {
+                isDragging = false;
+                // Update xOffset/yOffset to current position for next drag
+                xOffset = parseInt(img.style.left, 10);
+                yOffset = parseInt(img.style.top, 10);
+
+                // Emit new position to others if dragging stopped
+                socket.emit('drawing', {
+                    moveImage: true,
+                    id: img.id,
+                    x: xOffset,
+                    y: yOffset
+                });
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (isDragging) {
+                    e.preventDefault();
+                    currentX = e.clientX - initialX;
+                    currentY = e.clientY - initialY;
+
+                    img.style.left = `${currentX}px`;
+                    img.style.top = `${currentY}px`;
+                }
+            });
+        }
+
         socket.on('drawing', (data) => {
             if (data.clear) {
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
+                imageLayer.innerHTML = '';
                 return;
             }
-            ctx.strokeStyle = data.color;
-            ctx.lineWidth = data.size;
-            ctx.beginPath();
-            ctx.moveTo(data.x1, data.y1);
-            ctx.lineTo(data.x2, data.y2);
-            ctx.stroke();
+            if (data.image) {
+                if (!document.getElementById(data.id)) {
+                    addImageToWhiteboard(data.image, data.id, data.x, data.y);
+                }
+                return;
+            }
+            if (data.moveImage) {
+                const imgToMove = document.getElementById(data.id);
+                if (imgToMove) {
+                    imgToMove.style.left = `${data.x}px`;
+                    imgToMove.style.top = `${data.y}px`;
+                }
+                return;
+            }
+            drawLine(data.x1, data.y1, data.x2, data.y2, data.color, data.size, data.erase);
         });
 
-        // Handle window resize
-        window.addEventListener('resize', () => {
-            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            canvas.width = window.innerWidth - 20;
-            canvas.height = window.innerHeight - 20;
-            ctx.putImageData(imgData, 0, 0);
-            ctx.lineJoin = 'round';
-            ctx.lineCap = 'round';
-            ctx.strokeStyle = colorPicker.value;
-            ctx.lineWidth = brushSize.value;
-        });
+        // เรียกใช้งาน updateToolbarButtons เมื่อโหลดหน้าครั้งแรก เพื่อให้ปุ่มดินสอเป็น Active
+        updateToolbarButtons();
     </script>
 </body>
 </html>
